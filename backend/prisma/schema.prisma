@@ -1,0 +1,270 @@
+datasource db {
+  provider = "mysql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. QUẢN LÝ XÁC THỰC VÀ THÔNG TIN NGƯỜI DÙNG
+// ==========================================
+enum VaiTro {
+  QUANTRIVIEN // Quản trị viên
+  NHANVIEN    // Nhân viên
+  KHACHHANG   // Khách hàng
+}
+
+enum PhuongThucDangNhap {
+  HE_THONG    // Đăng ký bằng Email/Tên đăng nhập & Mật khẩu
+  GOOGLE      // Đăng nhập nhanh bằng Google OAuth
+}
+
+// Bảng chuyên quản lý đăng nhập và bảo mật
+model TaiKhoan {
+  id                   String             @id @default(uuid())
+  email                String             @unique
+  tenDangNhap          String?            @unique // Cho phép đăng nhập bằng tên đăng nhập hoặc email
+  matKhau              String?            // Cho phép NULL nếu người dùng đăng ký bằng Google
+  phuongThuc           PhuongThucDangNhap @default(HE_THONG) 
+  vaiTro               VaiTro             @default(KHACHHANG)
+  trangThai            Boolean            @default(true) // Khóa / Mở khóa tài khoản
+  maKhoiPhucMatKhau    String?            // Token/OTP quên mật khẩu
+  thoiHanKhoiPhuc      DateTime?          // Thời gian hết hạn của OTP/Token
+  ngayTao              DateTime           @default(now())
+  ngayCapNhat          DateTime           @updatedAt
+
+  // Mối quan hệ 1-1 với thông tin người dùng
+  nguoiDung            NguoiDung?
+
+  @@map("tai_khoan")
+}
+
+// Bảng chuyên quản lý thông tin hồ sơ người dùng
+model NguoiDung {
+  id           String          @id @default(uuid())
+  taiKhoanId   String          @unique
+  hoTen        String
+  soDienThoai  String?
+  anhDaiDien   String?         // Link ảnh lưu từ Cloudinary
+  ngayTao      DateTime        @default(now())
+  ngayCapNhat  DateTime        @updatedAt
+
+  // Mối quan hệ đầy đủ với các bảng khác
+  taiKhoan     TaiKhoan        @relation(fields: [taiKhoanId], references: [id], onDelete: Cascade)
+  diaChi       DiaChi[]        // Sổ địa chỉ
+  gioHang      GioHang[]       // Giỏ hàng của người dùng
+  donHang      DonHang[]       // Lịch sử đơn hàng
+  doiTra       YeuCauDoiTra[]  // Yêu cầu đổi trả
+  tinTuc       TinTuc[]        // Bài viết tin tức/khuyến mãi
+  danhGia      DanhGia[]       // Đánh giá sản phẩm
+
+  @@map("nguoi_dung")
+}
+
+model DiaChi {
+  id             String    @id @default(uuid())
+  nguoiDungId    String
+  tenNguoiNhan   String
+  soDienThoai    String
+  duong          String    // Số nhà, tên đường
+  phuong         String    // Phường/Xã
+  quan           String    // Quận/Huyện
+  thanhPho       String    // Tỉnh/Thành phố
+  macDinh        Boolean   @default(false)
+  
+  nguoiDung      NguoiDung @relation(fields: [nguoiDungId], references: [id], onDelete: Cascade)
+
+  @@map("dia_chi")
+}
+
+// ==========================================
+// 2. QUẢN LÝ SẢN PHẨM & BIẾN THỂ
+// ==========================================
+model ThuongHieu {
+  id        String    @id @default(uuid())
+  ten       String    @unique
+  anhLogo   String?   // Link logo thương hiệu từ Cloudinary
+  sanPham   SanPham[]
+
+  @@map("thuong_hieu")
+}
+
+model SanPham {
+  id           String            @id @default(uuid())
+  ten          String            
+  duongDanNgan String            @unique // Slug đường dẫn thân thiện
+  moTa         String            @db.Text
+  loaiTheThao  String            
+  thuongHieuId String
+  anHien       Boolean           @default(false) // Ẩn/Hiện sản phẩm
+  ngayTao      DateTime          @default(now())
+  ngayCapNhat  DateTime          @updatedAt
+
+  thuongHieu   ThuongHieu        @relation(fields: [thuongHieuId], references: [id])
+  bienThe      BienTheSanPham[]  
+  danhGia      DanhGia[]        
+
+  @@map("san_pham")
+}
+
+model BienTheSanPham {
+  id            String      @id @default(uuid())
+  sanPhamId     String
+  kichCo        String      // Kích cỡ (S, M, L hoặc 40, 41...)
+  mauSac        String      // Màu sắc
+  gia           Decimal     @db.Decimal(10, 2)
+  soLuongTon    Int         @default(0) // Số lượng tồn kho theo thời gian thực
+  anhBienThe    String?     // Link ảnh màu sắc biến thể từ Cloudinary
+  
+  sanPham       SanPham     @relation(fields: [sanPhamId], references: [id], onDelete: Cascade)
+  chiTietDon    ChiTietDonHang[]
+  gioHang       GioHang[]
+
+  @@map("bien_the_san_pham")
+}
+
+// ==========================================
+// 3. QUẢN LÝ GIỎ HÀNG & ĐƠN HÀNG
+// ==========================================
+enum TrangThaiDon {
+  CHOXACNHAN    // Chờ xác nhận
+  DANGCHUANBI   // Đang chuẩn bị hàng
+  DANGVANCHUYEN // Đang vận chuyển
+  HOANTHANH     // Giao thành công
+  DAHUY         // Đã hủy
+}
+
+enum PhuongThucThanhToan {
+  COD           // Thanh toán khi nhận hàng
+  TRUYEN_TUYEN  // Thanh toán trực tuyến / QR
+}
+
+model GioHang {
+  id          String         @id @default(uuid())
+  nguoiDungId String
+  bienTheId   String
+  soLuong     Int
+
+  // Đã bổ sung đầy đủ quan hệ liên kết với NguoiDung và BienTheSanPham
+  nguoiDung   NguoiDung      @relation(fields: [nguoiDungId], references: [id], onDelete: Cascade)
+  bienThe     BienTheSanPham @relation(fields: [bienTheId], references: [id], onDelete: Cascade)
+
+  @@unique([nguoiDungId, bienTheId])
+  @@map("gio_hang")
+}
+
+model DonHang {
+  id                  String              @id @default(uuid())
+  nguoiDungId         String
+  tongTien            Decimal             @db.Decimal(10, 2)
+  giamGia             Decimal             @default(0) @db.Decimal(10, 2)
+  thanhTien           Decimal             @db.Decimal(10, 2)
+  trangThai           TrangThaiDon        @default(CHOXACNHAN)
+  phuongThucThanhToan PhuongThucThanhToan
+  daThanhToan         Boolean             @default(false)
+  diaChiGiaoHang      String              // Snapshot địa chỉ giao hàng
+  ngayTao             DateTime            @default(now())
+  ngayCapNhat         DateTime            @updatedAt
+
+  nguoiDung           NguoiDung           @relation(fields: [nguoiDungId], references: [id])
+  chiTiet             ChiTietDonHang[]
+  yeuCauDoiTra        YeuCauDoiTra?
+  thanhToan           ThanhToan?
+
+  @@map("don_hang")
+}
+
+model ChiTietDonHang {
+  id          String         @id @default(uuid())
+  donHangId   String
+  bienTheId   String
+  soLuong     Int
+  gia         Decimal        @db.Decimal(10, 2) // Giá tại thời điểm mua
+
+  donHang     DonHang        @relation(fields: [donHangId], references: [id], onDelete: Cascade)
+  bienThe     BienTheSanPham @relation(fields: [bienTheId], references: [id])
+
+  @@map("chi_tiet_don_hang")
+}
+
+// ==========================================
+// 4. QUẢN LÝ THANH TOÁN
+// ==========================================
+enum TrangThaiThanhToan {
+  CHUATHANHTOAN 
+  DATHANHTOAN   
+  HOANTIEN      
+}
+
+model ThanhToan {
+  id              String             @id @default(uuid())
+  donHangId       String             @unique
+  soTien          Decimal            @db.Decimal(10, 2)
+  phuongThuc      PhuongThucThanhToan
+  trangThai       TrangThaiThanhToan @default(CHUATHANHTOAN)
+  maGiaoDich      String?            // Mã giao dịch từ ngân hàng
+  ngayThanhToan   DateTime?          
+  ngayTao         DateTime           @default(now())
+
+  donHang         DonHang            @relation(fields: [donHangId], references: [id], onDelete: Cascade)
+
+  @@map("thanh_toan")
+}
+
+// ==========================================
+// 5. QUẢN LÝ ĐỔI TRẢ & TIN TỨC
+// ==========================================
+enum TrangThaiDoiTra {
+  CHODUET     // Chờ duyệt
+  DAPHEDUYET  // Đã phê duyệt đổi trả
+  TUCHOI      // Từ chối
+}
+
+model YeuCauDoiTra {
+  id          String          @id @default(uuid())
+  donHangId   String          @unique
+  nguoiDungId String
+  lyDo        String          
+  minhChung   String          @db.Text // Link ảnh/video minh chứng từ Cloudinary
+  trangThai   TrangThaiDoiTra @default(CHODUET)
+  ghiChu      String?         // Phản hồi từ nhân viên
+  ngayTao     DateTime        @default(now())
+
+  donHang     DonHang         @relation(fields: [donHangId], references: [id])
+  nguoiDung   NguoiDung       @relation(fields: [nguoiDungId], references: [id])
+
+  @@map("yeu_cau_doi_tra")
+}
+
+model TinTuc {
+  id           String    @id @default(uuid())
+  tieuDe       String    
+  duongDanNgan String    @unique 
+  noiDung      String    @db.Text 
+  anhBia       String?   // Link ảnh bìa từ Cloudinary
+  tacGiaId     String    
+  ngayDang     DateTime  @default(now())
+
+  tacGia       NguoiDung @relation(fields: [tacGiaId], references: [id])
+
+  @@map("tin_tuc")
+}
+
+// ==========================================
+// 6. QUẢN LÝ ĐÁNH GIÁ SẢN PHẨM
+// ==========================================
+model DanhGia {
+  id          String    @id @default(uuid())
+  sanPhamId   String
+  nguoiDungId String
+  soSao       Int       // Số sao từ 1 đến 5
+  binhLuan    String?   @db.Text 
+  hinhAnh     String?   @db.Text // Link hình ảnh đánh giá từ Cloudinary
+  ngayTao     DateTime  @default(now())
+
+  sanPham     SanPham   @relation(fields: [sanPhamId], references: [id], onDelete: Cascade)
+  nguoiDung   NguoiDung @relation(fields: [nguoiDungId], references: [id], onDelete: Cascade)
+
+  @@map("danh_gia")
+}
