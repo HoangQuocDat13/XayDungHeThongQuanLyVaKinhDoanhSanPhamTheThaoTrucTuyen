@@ -5,7 +5,10 @@
 
 # TypeScript build cache
 *.tsbuildinfo
-
+.agents/
+.claude/
+.cursor/
+.devin/
 # Logs
 logs
 *.log
